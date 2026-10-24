@@ -1,118 +1,157 @@
+import os
+import base64
+import yaml
+from playwright.sync_api import sync_playwright
 from inspect import cleandoc
-class Example:
+from pathlib import Path
+
+
+def sanitize_filename(name: str) -> str:
+    """清理文件名，去掉 | / \ : * ? " < > 等非法字符，zh_CN含|分割也处理"""
+    bad_chars = r'|/\:*?"<> '
+    for c in bad_chars:
+        name = name.replace(c, "_")
+    return name.strip("_")
+
+
+def generate_916_card(
+    img_path: str,
+    en_US: str,
+    en_US_IPA: str,
+    zh_CN: str,
+    zh_PY: str,
+    ko_KR: str,
+    ko_RO: str,
+    jp_JP: str,
+    jp_RO: str,
+    out_path: str,
+    html_template_text: str
+):
+    # 读取图片，转为base64 data‑url
+    with open(img_path, "rb") as f:
+        img_bytes = f.read()
+    ext = os.path.splitext(img_path)[1].lower()
+    mime_map = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp"
+    }
+    mime = mime_map.get(ext, "image/png")
+    b64_data = base64.b64encode(img_bytes).decode("utf‑8")
+    img_data_url = f"data:{mime};base64,{b64_data}"
+
+    html_text = html_template_text
+    html_text = html_text.replace("{{IMG_BASE64}}", img_data_url)
+    html_text = html_text.replace("{{en_US}}", en_US)
+    html_text = html_text.replace("{{en_US_IPA}}", en_US_IPA)
+    html_text = html_text.replace("{{zh_CN}}", zh_CN)
+    html_text = html_text.replace("{{zh_PY}}", zh_PY)
+    html_text = html_text.replace("{{ko_KR}}", ko_KR)
+    html_text = html_text.replace("{{ko_RO}}", ko_RO)
+    html_text = html_text.replace("{{jp_JP}}", jp_JP)
+    html_text = html_text.replace("{{jp_RO}}", jp_RO)
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1080, "height": 1920})
+        page.set_content(html_text)
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(300)
+        page.screenshot(path=out_path, full_page=False)
+        browser.close()
+    print(f"✅ 卡片生成成功: {out_path}")
+
+
+class WordCardMaker:
     """
-    A example node
-
-    Class methods
-    -------------
-    INPUT_TYPES (dict):
-        Tell the main program input parameters of nodes.
-    IS_CHANGED:
-        optional method to control when the node is re executed.
-
-    Attributes
-    ----------
-    RETURN_TYPES (`tuple`):
-        The type of each element in the output tulple.
-    RETURN_NAMES (`tuple`):
-        Optional: The name of each output in the output tulple.
-    FUNCTION (`str`):
-        The name of the entry-point method. For example, if `FUNCTION = "execute"` then it will run Example().execute()
-    OUTPUT_NODE ([`bool`]):
-        If this node is an output node that outputs a result/image from the graph. The SaveImage node is an example.
-        The backend iterates on these output nodes and tries to execute all their parents if their parent graph is properly connected.
-        Assumed to be False if not present.
-    CATEGORY (`str`):
-        The category the node should appear in the UI.
-    execute(s) -> tuple || None:
-        The entry point method. The name of this method must be the same as the value of property `FUNCTION`.
-        For example, if `FUNCTION = "execute"` then this method's name must be `execute`, if `FUNCTION = "foo"` then it must be `foo`.
+    生词闪卡生成节点：输入yaml字符串 + 图片目录，调用playwright渲染template_card.html生成词汇卡片PNG
+    【trigger】输入仅做时序依赖，连接SaveImage输出，保证图片全部保存磁盘后再执行本节点
     """
-    def __init__(self):
-        pass
-
     @classmethod
     def INPUT_TYPES(s):
-        """
-            Return a dictionary which contains config for all input fields.
-            Some types (string): "MODEL", "VAE", "CLIP", "CONDITIONING", "LATENT", "IMAGE", "INT", "STRING", "FLOAT".
-            Input types "INT", "STRING" or "FLOAT" are special values for fields on the node.
-            The type can be a list for selection.
-
-            Returns: `dict`:
-                - Key input_fields_group (`string`): Can be either required, hidden or optional. A node class must have property `required`
-                - Value input_fields (`dict`): Contains input fields config:
-                    * Key field_name (`string`): Name of a entry-point method's argument
-                    * Value field_config (`tuple`):
-                        + First value is a string indicate the type of field or a list for selection.
-                        + Secound value is a config for type "INT", "STRING" or "FLOAT".
-        """
         return {
             "required": {
-                "image": ("Image", { "tooltip": "This is an image"}),
-                "int_field": ("INT", {
-                    "default": 0,
-                    "min": 0, #Minimum value
-                    "max": 4096, #Maximum value
-                    "step": 64, #Slider's step
-                    "display": "number" # Cosmetic only: display as "number" or "slider"
+                "yaml_text": ("STRING", {
+                    "multiline": True,
+                    "tooltip": "词条YAML对象列表文本，和card_00001_.yaml内容一致"
                 }),
-                "float_field": ("FLOAT", {
-                    "default": 1.0,
-                    "min": 0.0,
-                    "max": 10.0,
-                    "step": 0.01,
-                    "round": 0.001, #The value represeting the precision to round to, will be set to the step value by default. Can be set to False to disable rounding.
-                    "display": "number"}),
-                "print_to_screen": (["enable", "disable"],),
-                "string_field": ("STRING", {
-                    "multiline": False, #True if you want the field to look like the one on the ClipTextEncode node
-                    "default": "Hello World!"
+                "image_output_dir": ("STRING", {
+                    "default": "",
+                    "tooltip": "img_00001_.png等图片存放目录，输出卡片也保存到此目录"
                 }),
-            },
+                "trigger": ("*", {"tooltip": "时序触发端口，连接SaveImage输出images，仅用于等待图片保存完成，不读取数据"})
+            }
         }
 
-    RETURN_TYPES = ("IMAGE",)
-    #RETURN_NAMES = ("image_output_name",)
+    RETURN_TYPES = ()
+    FUNCTION = "run"
+    CATEGORY = "WordCard"
+    OUTPUT_NODE = True  # 标记输出节点，即使无返回tuple，comfyui也会执行
     DESCRIPTION = cleandoc(__doc__)
-    FUNCTION = "test"
 
-    #OUTPUT_NODE = False
-    #OUTPUT_TOOLTIPS = ("",) # Tooltips for the output node
+    def run(self, yaml_text: str, image_output_dir: str, trigger):
+        # -------- 1.加载html模板文件，模板放在本节点源码目录 --------
+        # 当前nodes.py文件所在目录
+        this_file = Path(__file__).absolute()
+        node_src_dir = this_file.parent
+        template_path = node_src_dir / "template_card.html"
+        if not template_path.exists():
+            raise FileNotFoundError(f"节点源码目录缺失 template_card.html ;预期路径：{template_path}")
+        with open(template_path, "r", encoding="utf-8") as f:
+            html_template = f.read()
 
-    CATEGORY = "Example"
+        # -------- 2.解析yaml字符串 --------
+        try:
+            entries = yaml.safe_load(yaml_text)
+        except yaml.YAMLError as e:
+            raise ValueError(f"YAML文本解析失败：{str(e)}") from e
 
-    def test(self, image, string_field, int_field, float_field, print_to_screen):
-        if print_to_screen == "enable":
-            print(f"""Your input contains:
-                string_field aka input text: {string_field}
-                int_field: {int_field}
-                float_field: {float_field}
-            """)
-        #do some processing on the image, in this example I just invert it
-        image = 1.0 - image
-        return (image,)
+        if not isinstance(entries, list):
+            raise ValueError("yaml_text必须是对象列表，以 `-` 开头数组")
 
-    """
-        The node will always be re executed if any of the inputs change but
-        this method can be used to force the node to execute again even when the inputs don't change.
-        You can make this node return a number or a string. This value will be compared to the one returned the last time the node was
-        executed, if it is different the node will be executed again.
-        This method is used in the core repo for the LoadImage node where they return the image hash as a string, if the image hash
-        changes between executions the LoadImage node is executed again.
-    """
-    #@classmethod
-    #def IS_CHANGED(s, image, string_field, int_field, float_field, print_to_screen):
-    #    return ""
+        target_dir = Path(image_output_dir).absolute()
+        if not target_dir.exists():
+            raise NotADirectoryError(f"图片输出目录不存在：{target_dir}")
+
+        print(f"\n===== WordCardMaker: 开始处理，目标目录 {target_dir} =====")
+
+        for idx, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                raise ValueError(f"yaml列表第[{idx}]项不是dict词条对象")
+
+            # 原图文件名：img_00001_.png，索引从1开始
+            img_filename = f"img_{idx+1:05d}_.png"
+            img_abs = target_dir / img_filename
+            if not img_abs.exists():
+                raise FileNotFoundError(f"找不到对应图片：{img_abs}，yaml数组第{idx}项，期待文件名 {img_filename}")
+
+            zhcn_raw = entry["zh_CN"]
+            safe_name = sanitize_filename(zhcn_raw)
+            out_filename = f"{safe_name}.png"
+            out_abs = target_dir / out_filename
+
+            generate_916_card(
+                img_path=str(img_abs),
+                en_US=entry["en_US"],
+                en_US_IPA=entry["en_US_IPA"],
+                zh_CN=entry["zh_CN"],
+                zh_PY=entry["zh_PY"],
+                ko_KR=entry["ko_KR"],
+                ko_RO=entry["ko_RO"],
+                jp_JP=entry["jp_JP"],
+                jp_RO=entry["jp_RO"],
+                out_path=str(out_abs),
+                html_template_text=html_template
+            )
+        print(f"===== WordCardMaker: 全部词条卡片处理完成 =====\n")
+        return {}
 
 
-# A dictionary that contains all nodes you want to export with their names
-# NOTE: names should be globally unique
 NODE_CLASS_MAPPINGS = {
-    "Example": Example
+    "WordCardMaker": WordCardMaker
 }
 
-# A dictionary that contains the friendly/humanly readable titles for the nodes
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "Example": "Example Node"
+    "WordCardMaker": "生词闪卡生成器(Playwright)"
 }
