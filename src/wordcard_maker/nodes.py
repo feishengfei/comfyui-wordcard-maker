@@ -1,7 +1,7 @@
 import os
 import base64
 import yaml
-from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
 from inspect import cleandoc
 from pathlib import Path
 
@@ -14,7 +14,7 @@ def sanitize_filename(name: str) -> str:
     return name.strip("_")
 
 
-def generate_916_card(
+async def generate_916_card(
     img_path: str,
     en_US: str,
     en_US_IPA: str,
@@ -52,14 +52,15 @@ def generate_916_card(
     html_text = html_text.replace("{{jp_JP}}", jp_JP)
     html_text = html_text.replace("{{jp_RO}}", jp_RO)
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": 1080, "height": 1920})
-        page.set_content(html_text)
-        page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(300)
-        page.screenshot(path=out_path, full_page=False)
-        browser.close()
+    # 使用异步playwright
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1080, "height": 1920})
+        await page.set_content(html_text)
+        await page.wait_for_load_state("networkidle")
+        await page.wait_for_timeout(300)
+        await page.screenshot(path=out_path, full_page=False)
+        await browser.close()
     print(f"✅ 卡片生成成功: {out_path}")
 
 
@@ -87,12 +88,12 @@ class WordCardMaker:
     RETURN_TYPES = ()
     FUNCTION = "run"
     CATEGORY = "WordCard"
-    OUTPUT_NODE = True  # 标记输出节点，即使无返回tuple，comfyui也会执行
+    OUTPUT_NODE = True
     DESCRIPTION = cleandoc(__doc__)
 
-    def run(self, yaml_text: str, image_output_dir: str, trigger):
+    # 关键：改为 async def run
+    async def run(self, yaml_text: str, image_output_dir: str, trigger):
         # -------- 1.加载html模板文件，模板放在本节点源码目录 --------
-        # 当前nodes.py文件所在目录
         this_file = Path(__file__).absolute()
         node_src_dir = this_file.parent
         template_path = node_src_dir / "template_card.html"
@@ -120,7 +121,6 @@ class WordCardMaker:
             if not isinstance(entry, dict):
                 raise ValueError(f"yaml列表第[{idx}]项不是dict词条对象")
 
-            # 原图文件名：img_00001_.png，索引从1开始
             img_filename = f"img_{idx+1:05d}_.png"
             img_abs = target_dir / img_filename
             if not img_abs.exists():
@@ -131,7 +131,8 @@ class WordCardMaker:
             out_filename = f"{safe_name}.png"
             out_abs = target_dir / out_filename
 
-            generate_916_card(
+            # 加上 await！
+            await generate_916_card(
                 img_path=str(img_abs),
                 en_US=entry["en_US"],
                 en_US_IPA=entry["en_US_IPA"],
