@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+body {
+    width: 1920px;
+    height: 1080px;
+    background-color: #ffffff;
+    font-family: "Noto Sans SC", "Noto Sans JP", "Noto Sans KR", "Noto Sans Arabic", "Noto Sans Cyrillic", sans-serif;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: row;
+}
+/* ========== 左侧 1:1 图片方块 ========== */
+.img-wrap {
+    width: 1080px;
+    height: 1080px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.main-img {
+    width: 1080px;
+    height: 1080px;
+    object-fit: contain;
+}
+/* ========== 右侧总容器：垂直布局（双列内容 + 底部copyright） ========== */
+.right-container {
+    flex:1;
+    height:1080px;
+    display:flex;
+    flex-direction: column;
+}
+.right-col-row {
+    flex: 1;
+    display:flex;
+    flex-direction: row;
+}
+.col-left, .col-right {
+    width: 420px;
+    display:flex;
+    flex-direction: column;
+    justify-content: space-evenly;
+    /* 增大上下安全padding，防止底部音标被裁切 */
+    padding: 40px 12px 60px 12px;
+}
+/* ========== 单个语言格子 line-wrap：带国旗emoji半透明背景水印 ========== */
+.line-wrap {
+    position: relative;
+    width:100%;
+    height: 185px; /* 降低固定高度，留出字符下伸安全余量 */
+    display:flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 8px; /* 单词和音标垂直紧凑间隙 */
+    border-radius:12px;
+    /* ⚠️重要：移除 overflow:hidden，不再裁切音标下伸字形 */
+}
+/* 国旗水印背景层，放大、低透明度 */
+.line-wrap::before {
+    content: var(--flag-emoji);
+    position:absolute;
+    inset:0;
+    font-size:280px;
+    opacity:0.1;
+    z-index:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    pointer-events:none;
+}
+.line_main {
+    position:relative;
+    z-index:1;
+    width: 85%; /* 限制内容块宽度，不要撑满整格 */
+    margin: 0 auto; /* ✅块盒子在格子里面水平居中 */
+    font-weight:700;
+    font-size:42px;
+    color:#222222;
+    padding: 0 8px;
+    text-align: center; /* 默认居中（其它语种） */
+}
+.line_sub {
+    position:relative;
+    z-index:1;
+    width: 85%;
+    margin:0 auto; /* ✅音标块盒子也居中 */
+    /* 音标优先Charis SIL，完美处理U+0361连冠符号；兜底保留多语言字体栈 */
+    font-family: "Charis SIL", "Doulos SIL", "Noto Sans", "Noto Sans SC", "Noto Sans Arabic", system-ui, sans‑serif;
+    font-weight:500;
+    font-size:28px;
+    color:#444444;
+    padding:0 8px;
+    text-align:center; /* 音标全部统一居中 */
+}
+/* ========== 阿拉伯语特殊覆写 ========== */
+.ar-wrap .line_main {
+    direction: rtl;         /* 开启阿拉伯从右向左书写 */
+    text-align: right;      /* 🎯块盒子是居中的；但盒子内部文字靠右 */
+}
+/* ar-wrap 的 line_sub 不做任何修改，继承上面的：块居中 + text‑align:center，和别的语种音标完全一致 */
+/* 版权放在右侧区域底部，不再全局absolute */
+.footer-copyright {
+    text-align: center;
+    font-size:24px;
+    color:#999999;
+    padding-bottom:12px;
+    letter-spacing:1px;
+}
+</style>
+</head>
+<body>
+    <div class="img-wrap">
+        <img class="main-img" src="{{IMG_BASE64}}">
+    </div>
+    <div class="right-container">
+        <div class="right-col-row">
+            <!-- 右半区：左列 4个：🇬🇧 en_GB / 🇩🇪 de_DE / 🇫🇷 fr_FR / 🇮🇹 it_IT -->
+            <div class="col-left">
+                <div class="line-wrap" style="--flag-emoji:'🇬🇧'">
+                    <div class="line_main">{{en_GB}}</div>
+                    <div class="line_sub">{{en_GB_IPA}}</div>
+                </div>
+                <div class="line-wrap" style="--flag-emoji:'🇩🇪'">
+                    <div class="line_main">{{de_DE}}</div>
+                    <div class="line_sub">{{de_DE_IPA}}</div>
+                </div>
+                <div class="line-wrap" style="--flag-emoji:'🇫🇷'">
+                    <div class="line_main">{{fr_FR}}</div>
+                    <div class="line_sub">{{fr_FR_IPA}}</div>
+                </div>
+                <div class="line-wrap" style="--flag-emoji:'🇮🇹'">
+                    <div class="line_main">{{it_IT}}</div>
+                    <div class="line_sub">{{it_IT_IPA}}</div>
+                </div>
+            </div>
+            <!-- 右半区：右列 4个：🇸🇪 sv_SE / 🇪🇸 es_ES / 🇸🇦 ar_SA / 🇷🇺 ru_RU -->
+            <div class="col-right">
+                <div class="line-wrap" style="--flag-emoji:'🇸🇪'">
+                    <div class="line_main">{{sv_SE}}</div>
+                    <div class="line_sub">{{sv_SE_IPA}}</div>
+                </div>
+                <div class="line-wrap" style="--flag-emoji:'🇪🇸'">
+                    <div class="line_main">{{es_ES}}</div>
+                    <div class="line_sub">{{es_ES_IPA}}</div>
+                </div>
+                <div class="line-wrap ar-wrap" style="--flag-emoji:'🇸🇦'">
+                    <div class="line_main">{{ar_SA}}</div>
+                    <div class="line_sub">{{ar_SA_IPA}}</div>
+                </div>
+                <div class="line-wrap" style="--flag-emoji:'🇷🇺'">
+                    <div class="line_main">{{ru_RU}}</div>
+                    <div class="line_sub">{{ru_RU_IPA}}</div>
+                </div>
+            </div>
+        </div>
+        <!-- copyright放到右侧容器的底部 -->
+        <div class="footer-copyright">Copyright © 2026 文画卷</div>
+    </div>
+</body>
+</html>

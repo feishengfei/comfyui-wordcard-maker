@@ -15,6 +15,7 @@ def sanitize_filename(name: str) -> str:
 
 
 async def generate_916_card(
+    browser,   # 复用外部已经启动好的browser，不再内部launch
     img_path: str,
     en_US: str,
     en_US_IPA: str,
@@ -52,15 +53,13 @@ async def generate_916_card(
     html_text = html_text.replace("{{jp_JP}}", jp_JP)
     html_text = html_text.replace("{{jp_RO}}", jp_RO)
 
-    # 使用异步playwright
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page(viewport={"width": 1080, "height": 1920})
-        await page.set_content(html_text)
-        await page.wait_for_load_state("networkidle")
-        await page.wait_for_timeout(300)
-        await page.screenshot(path=out_path, full_page=False)
-        await browser.close()
+    # 只新建页面，不重新启动浏览器！
+    page = await browser.new_page(viewport={"width": 1080, "height": 1920})
+    await page.set_content(html_text)
+    await page.wait_for_load_state("networkidle")
+    await page.wait_for_timeout(300)
+    await page.screenshot(path=out_path, full_page=False)
+    await page.close() # 关闭页面，浏览器实例保留
     print(f"✅ 卡片生成成功: {out_path}")
 
 
@@ -91,7 +90,6 @@ class WordCardMaker:
     OUTPUT_NODE = True
     DESCRIPTION = cleandoc(__doc__)
 
-    # 关键：改为 async def run
     async def run(self, yaml_text: str, image_output_dir: str, trigger):
         # -------- 1.加载html模板文件，模板放在本节点源码目录 --------
         this_file = Path(__file__).absolute()
@@ -117,34 +115,46 @@ class WordCardMaker:
 
         print(f"\n===== WordCardMaker: 开始处理，目标目录 {target_dir} =====")
 
-        for idx, entry in enumerate(entries):
-            if not isinstance(entry, dict):
-                raise ValueError(f"yaml列表第[{idx}]项不是dict词条对象")
-
-            img_filename = f"img_{idx+1:05d}_.png"
-            img_abs = target_dir / img_filename
-            if not img_abs.exists():
-                raise FileNotFoundError(f"找不到对应图片：{img_abs}，yaml数组第{idx}项，期待文件名 {img_filename}")
-
-            zhcn_raw = entry["zh_CN"]
-            safe_name = sanitize_filename(zhcn_raw)
-            out_filename = f"{safe_name}.png"
-            out_abs = target_dir / out_filename
-
-            # 加上 await！
-            await generate_916_card(
-                img_path=str(img_abs),
-                en_US=entry["en_US"],
-                en_US_IPA=entry["en_US_IPA"],
-                zh_CN=entry["zh_CN"],
-                zh_PY=entry["zh_PY"],
-                ko_KR=entry["ko_KR"],
-                ko_RO=entry["ko_RO"],
-                jp_JP=entry["jp_JP"],
-                jp_RO=entry["jp_RO"],
-                out_path=str(out_abs),
-                html_template_text=html_template
+        # ========== 只启动一次playwright和chromium浏览器 ==========
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox"],
+                # 关键：关闭chromium子进程std/stderr刷屏日志
+                env={"PWDEBUG": "0"},
             )
+
+            for idx, entry in enumerate(entries):
+                if not isinstance(entry, dict):
+                    raise ValueError(f"yaml列表第[{idx}]项不是dict词条对象")
+
+                img_filename = f"img_{idx+1:05d}_.png"
+                img_abs = target_dir / img_filename
+                if not img_abs.exists():
+                    raise FileNotFoundError(f"找不到对应图片：{img_abs}，yaml数组第{idx}项，期待文件名 {img_filename}")
+
+                zhcn_raw = entry["zh_CN"]
+                safe_name = sanitize_filename(zhcn_raw)
+                out_filename = f"{safe_name}.png"
+                out_abs = target_dir / out_filename
+
+                await generate_916_card(
+                    browser=browser, # 复用同一个浏览器实例
+                    img_path=str(img_abs),
+                    en_US=entry["en_US"],
+                    en_US_IPA=entry["en_US_IPA"],
+                    zh_CN=entry["zh_CN"],
+                    zh_PY=entry["zh_PY"],
+                    ko_KR=entry["ko_KR"],
+                    ko_RO=entry["ko_RO"],
+                    jp_JP=entry["jp_JP"],
+                    jp_RO=entry["jp_RO"],
+                    out_path=str(out_abs),
+                    html_template_text=html_template
+                )
+            # 循环全部结束，才关闭浏览器
+            await browser.close()
+
         print(f"===== WordCardMaker: 全部词条卡片处理完成 =====\n")
         return {}
 
