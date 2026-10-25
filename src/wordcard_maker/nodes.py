@@ -15,7 +15,7 @@ def sanitize_filename(name: str) -> str:
 
 
 async def generate_916_card(
-    browser,   # 复用外部已经启动好的browser，不再内部launch
+    browser,
     img_path: str,
     en_US: str,
     en_US_IPA: str,
@@ -53,19 +53,81 @@ async def generate_916_card(
     html_text = html_text.replace("{{jp_JP}}", jp_JP)
     html_text = html_text.replace("{{jp_RO}}", jp_RO)
 
-    # 只新建页面，不重新启动浏览器！
     page = await browser.new_page(viewport={"width": 1080, "height": 1920})
     await page.set_content(html_text)
     await page.wait_for_load_state("networkidle")
     await page.wait_for_timeout(300)
     await page.screenshot(path=out_path, full_page=False)
-    await page.close() # 关闭页面，浏览器实例保留
-    print(f"✅ 卡片生成成功: {out_path}")
+    await page.close()
+    print(f"✅ 竖版卡片生成成功: {out_path}")
+
+
+async def generate_16_9_card(
+    browser,
+    img_path: str,
+    en_GB: str,
+    en_GB_IPA: str,
+    de_DE: str,
+    de_DE_IPA: str,
+    fr_FR: str,
+    fr_FR_IPA: str,
+    it_IT: str,
+    it_IT_IPA: str,
+    sv_SE: str,
+    sv_SE_IPA: str,
+    es_ES: str,
+    es_ES_IPA: str,
+    ar_SA: str,
+    ar_SA_IPA: str,
+    ru_RU: str,
+    ru_RU_IPA: str,
+    out_path: str,
+    html_template_text: str
+):
+    with open(img_path, "rb") as f:
+        img_bytes = f.read()
+    ext = os.path.splitext(img_path)[1].lower()
+    mime_map = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp"
+    }
+    mime = mime_map.get(ext, "image/png")
+    b64_data = base64.b64encode(img_bytes).decode("utf‑8")
+    img_data_url = f"data:{mime};base64,{b64_data}"
+
+    html_text = html_template_text
+    html_text = html_text.replace("{{IMG_BASE64}}", img_data_url)
+    html_text = html_text.replace("{{en_GB}}", en_GB)
+    html_text = html_text.replace("{{en_GB_IPA}}", en_GB_IPA)
+    html_text = html_text.replace("{{de_DE}}", de_DE)
+    html_text = html_text.replace("{{de_DE_IPA}}", de_DE_IPA)
+    html_text = html_text.replace("{{fr_FR}}", fr_FR)
+    html_text = html_text.replace("{{fr_FR_IPA}}", fr_FR_IPA)
+    html_text = html_text.replace("{{it_IT}}", it_IT)
+    html_text = html_text.replace("{{it_IT_IPA}}", it_IT_IPA)
+    html_text = html_text.replace("{{sv_SE}}", sv_SE)
+    html_text = html_text.replace("{{sv_SE_IPA}}", sv_SE_IPA)
+    html_text = html_text.replace("{{es_ES}}", es_ES)
+    html_text = html_text.replace("{{es_ES_IPA}}", es_ES_IPA)
+    html_text = html_text.replace("{{ar_SA}}", ar_SA)
+    html_text = html_text.replace("{{ar_SA_IPA}}", ar_SA_IPA)
+    html_text = html_text.replace("{{ru_RU}}", ru_RU)
+    html_text = html_text.replace("{{ru_RU_IPA}}", ru_RU_IPA)
+
+    page = await browser.new_page(viewport={"width": 1920, "height": 1080})
+    await page.set_content(html_text)
+    await page.wait_for_load_state("networkidle")
+    await page.wait_for_timeout(300)
+    await page.screenshot(path=out_path, full_page=False)
+    await page.close()
+    print(f"✅ 横版16:9卡片生成成功: {out_path}")
 
 
 class WordCardMaker:
     """
-    生词闪卡生成节点：输入yaml字符串 + 图片目录，调用playwright渲染template_card.html生成词汇卡片PNG
+    生词闪卡生成节点：输入yaml字符串 + 图片目录，playwright渲染；支持竖版9:16，可选横版16:9八国语言卡片
     【trigger】输入仅做时序依赖，连接SaveImage输出，保证图片全部保存磁盘后再执行本节点
     """
     @classmethod
@@ -74,13 +136,19 @@ class WordCardMaker:
             "required": {
                 "yaml_text": ("STRING", {
                     "multiline": True,
-                    "tooltip": "词条YAML对象列表文本，和card_00001_.yaml内容一致"
+                    "tooltip": "词条YAML对象列表文本"
                 }),
                 "image_output_dir": ("STRING", {
                     "default": "",
                     "tooltip": "img_00001_.png等图片存放目录，输出卡片也保存到此目录"
                 }),
                 "trigger": ("*", {"tooltip": "时序触发端口，连接SaveImage输出images，仅用于等待图片保存完成，不读取数据"})
+            },
+            "optional": {
+                "generate_wide_16_9_card": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "是否额外生成横版16:9八国语言卡片；开启后yaml条目必须包含en_GB/de_DE等八国语言字段"
+                })
             }
         }
 
@@ -90,17 +158,27 @@ class WordCardMaker:
     OUTPUT_NODE = True
     DESCRIPTION = cleandoc(__doc__)
 
-    async def run(self, yaml_text: str, image_output_dir: str, trigger):
-        # -------- 1.加载html模板文件，模板放在本节点源码目录 --------
+    async def run(self, yaml_text: str, image_output_dir: str, trigger, generate_wide_16_9_card=False):
         this_file = Path(__file__).absolute()
         node_src_dir = this_file.parent
-        template_path = node_src_dir / "template_card.html"
-        if not template_path.exists():
-            raise FileNotFoundError(f"节点源码目录缺失 template_card.html ;预期路径：{template_path}")
-        with open(template_path, "r", encoding="utf-8") as f:
-            html_template = f.read()
 
-        # -------- 2.解析yaml字符串 --------
+        # 加载竖版模板
+        template_916_path = node_src_dir / "template_card.html"
+        if not template_916_path.exists():
+            raise FileNotFoundError(f"缺失竖版模板 template_card.html ;预期路径：{template_916_path}")
+        with open(template_916_path, "r", encoding="utf-8") as f:
+            html_916_template = f.read()
+
+        # 如果开启横版，加载横版模板
+        html_169_template = None
+        if generate_wide_16_9_card:
+            template_169_path = node_src_dir / "template_card02.html"
+            if not template_169_path.exists():
+                raise FileNotFoundError(f"开启横版卡片，但缺失 template_card02.html ;预期路径：{template_169_path}")
+            with open(template_169_path, "r", encoding="utf-8") as f:
+                html_169_template = f.read()
+
+        # 解析yaml
         try:
             entries = yaml.safe_load(yaml_text)
         except yaml.YAMLError as e:
@@ -115,12 +193,10 @@ class WordCardMaker:
 
         print(f"\n===== WordCardMaker: 开始处理，目标目录 {target_dir} =====")
 
-        # ========== 只启动一次playwright和chromium浏览器 ==========
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
                 args=["--no-sandbox"],
-                # 关键：关闭chromium子进程std/stderr刷屏日志
                 env={"PWDEBUG": "0"},
             )
 
@@ -134,12 +210,12 @@ class WordCardMaker:
                     raise FileNotFoundError(f"找不到对应图片：{img_abs}，yaml数组第{idx}项，期待文件名 {img_filename}")
 
                 zhcn_raw = entry["zh_CN"]
-                safe_name = sanitize_filename(zhcn_raw)
-                out_filename = f"{safe_name}.png"
-                out_abs = target_dir / out_filename
+                safe_zh = sanitize_filename(zhcn_raw)
 
+                # -------- 生成竖版 9:16 --------
+                out_916 = target_dir / f"{idx+1:02d}_{safe_zh}.png"
                 await generate_916_card(
-                    browser=browser, # 复用同一个浏览器实例
+                    browser=browser,
                     img_path=str(img_abs),
                     en_US=entry["en_US"],
                     en_US_IPA=entry["en_US_IPA"],
@@ -149,10 +225,52 @@ class WordCardMaker:
                     ko_RO=entry["ko_RO"],
                     jp_JP=entry["jp_JP"],
                     jp_RO=entry["jp_RO"],
-                    out_path=str(out_abs),
-                    html_template_text=html_template
+                    out_path=str(out_916),
+                    html_template_text=html_916_template
                 )
-            # 循环全部结束，才关闭浏览器
+
+                # -------- 如果开关打开，生成横版16:9八国语言 --------
+                if generate_wide_16_9_card:
+                    # 校验横版全部必填字段
+                    wide_fields = [
+                        "en_GB","en_GB_IPA","de_DE","de_DE_IPA",
+                        "fr_FR","fr_FR_IPA","it_IT","it_IT_IPA",
+                        "sv_SE","sv_SE_IPA","es_ES","es_ES_IPA",
+                        "ar_SA","ar_SA_IPA","ru_RU","ru_RU_IPA"
+                    ]
+                    missing = [k for k in wide_fields if k not in entry]
+                    if missing:
+                        raise ValueError(
+                            f"第[{idx}]条yaml词条缺少横版卡片字段：{','.join(missing)}\n"
+                            f"如需生成横版，请补全yaml词条，或关闭generate_wide_16_9_card开关"
+                        )
+                    en_gb_raw = entry["en_GB"]
+                    safe_en = sanitize_filename(en_gb_raw)
+                    out_169 = target_dir / f"wide_{idx+1:02d}_{safe_zh}_{safe_en}.png"
+
+                    await generate_16_9_card(
+                        browser=browser,
+                        img_path=str(img_abs),
+                        en_GB=entry["en_GB"],
+                        en_GB_IPA=entry["en_GB_IPA"],
+                        de_DE=entry["de_DE"],
+                        de_DE_IPA=entry["de_DE_IPA"],
+                        fr_FR=entry["fr_FR"],
+                        fr_FR_IPA=entry["fr_FR_IPA"],
+                        it_IT=entry["it_IT"],
+                        it_IT_IPA=entry["it_IT_IPA"],
+                        sv_SE=entry["sv_SE"],
+                        sv_SE_IPA=entry["sv_SE_IPA"],
+                        es_ES=entry["es_ES"],
+                        es_ES_IPA=entry["es_ES_IPA"],
+                        ar_SA=entry["ar_SA"],
+                        ar_SA_IPA=entry["ar_SA_IPA"],
+                        ru_RU=entry["ru_RU"],
+                        ru_RU_IPA=entry["ru_RU_IPA"],
+                        out_path=str(out_169),
+                        html_template_text=html_169_template
+                    )
+
             await browser.close()
 
         print(f"===== WordCardMaker: 全部词条卡片处理完成 =====\n")
